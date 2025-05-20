@@ -1,0 +1,155 @@
+import cv2
+import numpy as np
+import pyttsx3
+from ultralytics import YOLO  # YOLOv8 module
+
+# Initialize the text-to-speech engine
+engine = pyttsx3.init()
+engine.setProperty('rate', 150)  # Speech speed
+engine.setProperty('volume', 1.0)  # Volume
+
+# Configuration variables
+CONFIG = {
+    "input_video": "/Users/kavvinaykarthik/Desktop/VehicleGuidanceSystem/new.mov",
+    "output_video": "/Users/kavvinaykarthik/Desktop/VehicleGuidanceSystem/car_output.mp4",
+    "weights": "weights/yolov8n.pt",
+    "output_resolution": (1280, 720),
+    "fps": 30,
+    "confidence_threshold": 0.5,
+    "known_width": 2.0,  # Approximate car width in meters
+    "focal_length": 1000,  # Focal length for distance estimation
+}
+
+# Store vehicle positions for tracking
+previous_positions = {}
+collision_alert_given = False  # Ensure collision alert is not repeated
+
+# Function to estimate distance based on bounding box size
+def estimate_distance(bbox_width, config):
+    known_width = config["known_width"]
+    focal_length = config["focal_length"]
+    return (known_width * focal_length) / bbox_width if bbox_width else 0
+
+# Function to generate a voice alert
+def voice_alert(message):
+    print(message)  # Print alert in console
+    engine.say(message)
+    engine.runAndWait()  # Speak the message
+
+# Function to detect collision only if it's in the vehicle's path
+def detect_accident(current_positions, lane_center, lane_margin):
+    global collision_alert_given
+
+    for (id1, (x1, y1, x2, y2)) in current_positions.items():
+        for (id2, (x1_other, y1_other, x2_other, y2_other)) in current_positions.items():
+            if id1 != id2:  # Ensure different vehicles
+                # Check bounding box overlap (collision detected)
+                if x1 < x2_other and x2 > x1_other and y1 < y2_other and y2 > y1_other:
+                    # Check if collision is in the vehicle's path
+                    vehicle_center_x = (x1 + x2) // 2
+                    if lane_center - lane_margin <= vehicle_center_x <= lane_center + lane_margin:
+                        if not collision_alert_given:
+                            voice_alert("Emergency! Collision detected on your path!")
+                            collision_alert_given = True
+                        return True
+    return False
+
+# Function to process video and detect accidents
+def process_video(config):
+    global previous_positions, collision_alert_given
+
+    # Load YOLO model
+    model = YOLO(config["weights"])
+    cap = cv2.VideoCapture(config["input_video"])
+
+    if not cap.isOpened():
+        print("Error: Unable to open video file.")
+        return
+
+    # Initialize video writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(config["output_video"], fourcc, config["fps"], config["output_resolution"])
+
+    # Get video frame width for path checking
+    frame_width = config["output_resolution"][0]
+    lane_center = frame_width // 2  # Middle of the frame
+    lane_margin = frame_width // 6  # Define width of path detection area
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Resize frame
+        resized_frame = cv2.resize(frame, config["output_resolution"])
+
+        # Run YOLO on the frame
+        results = model(resized_frame)
+
+        # Track detected objects
+        current_positions = {}
+
+        for result in results:
+            boxes = result.boxes
+            for i, box in enumerate(boxes):
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = box.conf[0]
+                cls = int(box.cls[0])
+
+                # Filter only vehicle classes (cars, trucks, motorcycles)
+                if conf >= config["confidence_threshold"] and model.names[cls] in ["car", "truck", "bus", "motorcycle"]:
+                    class_name = model.names[cls]
+
+                    # Calculate object center
+                    object_center_x = (x1 + x2) // 2
+
+                    # Estimate distance
+                    bbox_width = x2 - x1
+                    distance = estimate_distance(bbox_width, config)
+                    distance = round(distance)  # Round distance
+
+                    # Store object position
+                    current_positions[i] = (x1, y1, x2, y2)
+
+                    # Draw bounding box
+                    box_color = (0, 255, 255)  # Default Yellow
+                    if distance <= 2:  # If very close
+                        box_color = (0, 0, 255)  # Red
+
+                    cv2.rectangle(resized_frame, (x1, y1), (x2, y2), box_color, 2)
+
+                    # Display label and distance
+                    label = f"{class_name} {conf:.2f}"
+                    cv2.putText(resized_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                    distance_label = f"Distance: {distance:.2f}m"
+                    cv2.putText(resized_frame, distance_label, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+                    # *Raise Warning Only If Vehicle in Path & Very Close*
+                    if lane_center - lane_margin <= object_center_x <= lane_center + lane_margin:
+                        if distance <= 2 and not collision_alert_given:
+                            voice_alert("Warning! Vehicle in front is very close.")
+                            collision_alert_given = True
+
+        # Detect accident (if vehicles collide on the path)
+        accident_detected = detect_accident(current_positions, lane_center, lane_margin)
+
+        # Display emergency alert if accident occurs
+        if accident_detected:
+            cv2.putText(resized_frame, "EMERGENCY! COLLISION DETECTED!", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+        # Show video while processing
+        cv2.imshow("Vehicle Guidance System", resized_frame)
+        out.write(resized_frame)
+
+        # Press 'q' to exit
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    # Release resources
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
+    print(f"Processed video saved at {config['output_video']}")
+
+# Run the function
+process_video(CONFIG)
