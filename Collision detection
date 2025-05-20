@@ -10,8 +10,8 @@ engine.setProperty('volume', 1.0)  # Volume
 
 # Configuration variables
 CONFIG = {
-    "input_video": "/Users/kavvinaykarthik/Desktop/VehicleGuidanceSystem/new.mov",
-    "output_video": "/Users/kavvinaykarthik/Desktop/VehicleGuidanceSystem/car_output.mp4",
+    "input_video": "/Users/ManiVarma/Desktop/VehicleGuidanceSystem/new.mov",
+    "output_video": "/Users/ManiVarma/Desktop/VehicleGuidanceSystem/car_output.mp4",
     "weights": "weights/yolov8n.pt",
     "output_resolution": (1280, 720),
     "fps": 30,
